@@ -29,34 +29,38 @@ The controller re-reads the PR and default branch before asking GitHub to merge 
 ## Mistral Vibe repair
 
 The `repair` composite action accepts an exact, failed Autorepo validation
-run, a reproduced dependency incompatibility, and scoped application source
-paths. A project provides the trusted JSON policy in
-`.github/autorepo-repair.json` and keeps its validation workflow and test
-commands in its own repository. A configured CI failure rule can dispatch a
-repair automatically after the current base passes CI. Without that rule, a
-maintainer confirms the diagnosis and starts the repair from the default
-branch. Audit, infrastructure, and unclassified failures stay in the
-deterministic workflow.
+run, a reproduced dependency incompatibility, and optional repair path hints.
+A project provides the trusted JSON policy in `.github/autorepo-repair.json`
+and keeps its validation workflow and test commands in its own repository. A
+configured CI failure rule can dispatch a repair automatically after the
+current base passes CI. Without that rule, a maintainer confirms the diagnosis
+and starts the repair from the default branch. Audit, infrastructure, and
+unclassified failures stay in the deterministic workflow.
 
-Vibe receives only the reviewed diagnosis, dependency diff, and selected source
-files. Its container has no external network or Docker socket. A host broker
-forwards a bounded number of requests to the Mistral chat endpoint and injects
-the dedicated API key outside the container. The runner checks the diff
-against the verified candidate commit using a temporary index and rejects
-changes outside the selected application files. The artifact records the PR,
-validation run, head, base, model, attempts, and reported token usage.
+The action verifies the PR, head, and base against GitHub, checks out the
+verified head without credentials, and runs the official Mistral Vibe CLI on
+the runner through uv and the pinned lockfile in this directory. The prompt
+carries the reviewed diagnosis, the dependency diff, the optional path hints,
+and the policy's `blocked_paths` list. Set `allow_bash: true` to keep the Bash
+tool enabled; without it, Vibe can still edit files but cannot run shell
+commands. The policy's turn, token, price, and time limits bound the run.
 
-Set `allow_bash: true` in the trusted repair policy to let Vibe run Bash
-inside that container. Use at least two turns so Vibe can receive command
-output and return its patch. The repair container receives the prompt and
-scratch space. It has no checkout or package registry access.
+`blocked_paths` is the single edit policy. Every path Vibe modified, created,
+or deleted must avoid all patterns in that list, for example `.github/**`,
+`**/*.test.*`, or `package.json`. The blocklist is stated in the prompt, and
+after the run Autorepo re-checks it deterministically by diffing the checkout
+against the verified head with a temporary index, rejecting blocked paths,
+mode changes, binaries, oversized patches, and credential-looking content.
+Renames are checked as a deletion and an addition. The artifact records the
+PR, validation run, head, base, attempt, and the usage reported by the Vibe
+run.
 
 The consuming workflow uploads the patch for human approval. A maintainer can
 apply the reviewed patch to a separate branch and open a PR for independent
-project CI. The repair job receives read-only GitHub permissions. Enable the
-job only after the Linux isolation test passes and a dedicated Mistral API key
-has been configured in the repository's repair environment. The CLI cost
-setting is indicative. The broker enforces request and completion-token caps.
+project CI. The repair job receives read-only GitHub permissions, and Vibe
+runs with the dedicated Mistral API key and ordinary runner network access:
+the prompt blocklist is guidance, not isolation, so treat the patch as
+untrusted and keep the job unprivileged. The CLI cost setting is indicative.
 
 ## Maintenance release drafts
 
