@@ -55,6 +55,9 @@ class FakeGitHub:
             return None
         if path.startswith("branches/"):
             return {"commit": {"sha": BASE}}
+        if path.startswith("pulls/"):
+            return {**next(pr for pr in self.pulls if pr["number"] == int(path.split("/")[1])),
+                    "state": "open"}
         if path.startswith("compare/"):
             return {"ahead_by": 1, "behind_by": any(f"...{n * 40}" in path for n in self.behind)}
         raise AssertionError(path)
@@ -98,10 +101,31 @@ class ReconcileTests(unittest.TestCase):
         self.reconcile(github)
         self.assertFalse(github.writes)
 
-    def test_updates_only_selected_stale_branch(self):
+    @patch("scheduler.sleep")
+    def test_updates_only_selected_stale_branch(self, _sleep):
         github = FakeGitHub([pr(1), pr(2)], behind=("1", "2"))
-        self.reconcile(github)
+        self.assertIn("branch update not confirmed", self.reconcile(github))
         self.assertEqual([p for p, _ in github.writes], [f"statuses/{'1' * 40}", "pulls/1/update-branch"])
+
+    @patch("scheduler.sleep")
+    def test_dispatches_validation_for_updated_head_in_same_run(self, _sleep):
+        candidate = pr(1)
+        refreshed = {**candidate, "state": "open", "head": {**candidate["head"], "sha": "a" * 40}}
+
+        class UpdatingGitHub(FakeGitHub):
+            def request(self, path, body=None, **kwargs):
+                if path == "pulls/1":
+                    return next(observed)
+                return super().request(path, body, **kwargs)
+
+        observed = iter([{**candidate, "state": "open"}, refreshed])
+        github = UpdatingGitHub([candidate, pr(2)], behind=("1", "2"))
+        report = self.reconcile(github, config={**CONFIG, "publish_status": True})
+        validation_status = next(body for path, body in github.writes if path == f"statuses/{'a' * 40}")
+        self.assertEqual(validation_status["state"], "pending")
+        [inputs] = [body["inputs"] for path, body in github.writes if path.endswith("/dispatches")]
+        self.assertEqual((inputs["pr"], inputs["head"], inputs["base"]), ("1", "a" * 40, BASE))
+        self.assertIn("PR #2 (P4): queued", report)
 
     def test_failed_validation_does_not_block_backlog(self):
         github = FakeGitHub([pr(1), pr(2)], [run(pr(1), conclusion="failure")])

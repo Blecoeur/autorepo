@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import PurePosixPath
 import re
+from time import sleep
 from urllib.error import HTTPError
 from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
@@ -16,6 +17,8 @@ SEVERITY = {"CRITICAL": 0, "HIGH": 1, "MODERATE": 2, "LOW": 3}
 MARKER = "autorepo/update"
 VALIDATION = "autorepo/validation"
 ACTIONS_BOT_ID = 41898282
+UPDATE_POLL_ATTEMPTS = 7
+UPDATE_POLL_SECONDS = 5
 SUPPORTED_LOCKFILES = {
     "pnpm-lock.yaml", "package-lock.json", "yarn.lock", "Cargo.lock",
     "poetry.lock", "uv.lock", "Pipfile.lock", "Gemfile.lock", "go.sum", "composer.lock",
@@ -213,6 +216,23 @@ def update(client, config, pr, base):
             return "branch update rejected; inspect conflict and request Dependabot recreation", False
         raise
     return "branch update requested", True
+
+
+def wait_for_updated_head(client, pr, branch, base):
+    """Observe GitHub's asynchronous branch update before leaving the controller run."""
+    for attempt in range(UPDATE_POLL_ATTEMPTS):
+        if attempt:
+            sleep(UPDATE_POLL_SECONDS)
+        refreshed = client.request(f"pulls/{pr['number']}")
+        if refreshed["state"] != "open" or not eligible(refreshed, client.repository, branch):
+            return None
+        head = refreshed["head"]["sha"]
+        if head == pr["head"]["sha"]:
+            continue
+        comparison = client.request(f"compare/{base}...{head}?per_page=1")
+        if comparison["ahead_by"] and not comparison["behind_by"]:
+            return refreshed
+    return None
 
 
 def publish_status(client, pr, base, targets, runs):
@@ -416,9 +436,23 @@ def reconcile(client, config, alerts, report, protection_client=None):
         if comparison["behind_by"]:
             state, busy = update(client, config, pr, base)
             report(f"{prefix}: {state}.")
-            if busy:
+            if not busy:
+                continue
+            refreshed = wait_for_updated_head(client, pr, branch, base)
+            if refreshed is None:
+                report(f"{prefix}: branch update not confirmed in this run; will check on the next reconciliation.")
                 active = {"id": "pending branch update"}
-            continue
+                continue
+            if client.request(f"branches/{quote(branch, safe='')}")["commit"]["sha"] != base:
+                report(f"{prefix}: base moved during the branch update; will check on the next reconciliation.")
+                return
+            pr = refreshed
+            head = pr["head"]["sha"]
+            if by_title.get(identity(pr, base, targets)):
+                report(f"{prefix}: updated head already has validation history; will check on the next reconciliation.")
+                continue
+            if config.get("publish_status"):
+                publish_status(client, pr, base, targets, [])
         dispatch(client, config, pr, base, targets)
         report(f"{prefix}: CI requested for head {head} and base {base}.")
         active = {"id": "dispatch just requested"}
