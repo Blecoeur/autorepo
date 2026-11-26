@@ -46,6 +46,11 @@ against the verified candidate commit using a temporary index and rejects
 changes outside the selected application files. The artifact records the PR,
 validation run, head, base, model, attempts, and reported token usage.
 
+Set `allow_bash: true` in the trusted repair policy to let Vibe run Bash
+inside that container. Use at least two turns so Vibe can receive command
+output and return its patch. The repair container receives the prompt and
+scratch space. It has no checkout or package registry access.
+
 The consuming workflow uploads the patch for human approval. A maintainer can
 apply the reviewed patch to a separate branch and open a PR for independent
 project CI. The repair job receives read-only GitHub permissions. Enable the

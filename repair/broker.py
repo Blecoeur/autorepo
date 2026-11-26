@@ -6,14 +6,28 @@ import socketserver
 from threading import Lock
 
 
+def restrict_tools(body, allow_bash):
+    tools = body.pop("tools", None)
+    if allow_bash and isinstance(tools, list):
+        for tool in tools:
+            if (isinstance(tool, dict) and tool.get("type") == "function"
+                    and isinstance(tool.get("function"), dict)
+                    and tool["function"].get("name") == "bash"):
+                body["tools"] = [tool]
+                break
+    for option in ("tool_choice", "parallel_tool_calls", "functions", "function_call"):
+        body.pop(option, None)
+
+
 class InferenceBroker(socketserver.ThreadingUnixStreamServer):
     daemon_threads = True
 
-    def __init__(self, path, api_key, model, requests, tokens):
+    def __init__(self, path, api_key, model, requests, tokens, *, allow_bash=False):
         self.api_key = api_key
         self.model = model
         self.requests = requests
         self.tokens = tokens
+        self.allow_bash = allow_bash
         self.lock = Lock()
         self.used = {"requests": 0, "prompt_tokens": 0, "completion_tokens": 0}
         super().__init__(path, InferenceRequest)
@@ -29,7 +43,7 @@ class InferenceBroker(socketserver.ThreadingUnixStreamServer):
             self.used["requests"] += 1
             return limit
 
-    def record_usage(self, data, streamed):
+    def record_usage(self, data, streamed, reserved):
         events = (line[6:] for line in data.splitlines() if line.startswith(b"data: ")) if streamed else (data,)
         for event in events:
             try:
@@ -39,6 +53,9 @@ class InferenceBroker(socketserver.ThreadingUnixStreamServer):
             if not isinstance(usage, dict):
                 continue
             with self.lock:
+                completion = usage.get("completion_tokens")
+                if type(completion) is int and 0 <= completion <= reserved:
+                    self.tokens += reserved - completion
                 for key in ("prompt_tokens", "completion_tokens"):
                     value = usage.get(key)
                     if type(value) is int and value >= 0:
@@ -68,8 +85,7 @@ class InferenceRequest(BaseHTTPRequestHandler):
             self.send_error(400, "Missing inference messages")
             return
         body["model"] = self.server.model
-        for option in ("tools", "tool_choice", "parallel_tool_calls", "functions", "function_call"):
-            body.pop(option, None)
+        restrict_tools(body, self.server.allow_bash)
         limit = self.server.reserve(body)
         if limit is None:
             self.send_error(429)
@@ -94,7 +110,7 @@ class InferenceRequest(BaseHTTPRequestHandler):
                 self.wfile.flush()
                 if len(trace) < 2_000_000:
                     trace.extend(chunk)
-            self.server.record_usage(trace, kind.startswith("text/event-stream"))
+            self.server.record_usage(trace, kind.startswith("text/event-stream"), limit)
         except OSError:
             self.close_connection = True
         finally:

@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from repair.broker import InferenceBroker
+from repair.broker import InferenceBroker, restrict_tools
 from repair.propose import check_patch, source_path
 
 
@@ -37,6 +37,24 @@ class RepairPolicyTests(unittest.TestCase):
             broker = InferenceBroker("unused.sock", "dummy", "test", 2, 80)
         self.assertEqual(broker.reserve({"max_tokens": 30}), 30)
         self.assertEqual(broker.reserve({"max_tokens": 400}), 50)
+        self.assertIsNone(broker.reserve({"max_tokens": 1}))
+
+    def test_bash_is_the_only_tool_the_broker_can_forward(self):
+        bash = {"type": "function", "function": {"name": "bash"}}
+        other = {"type": "function", "function": {"name": "web_search"}}
+        body = {"tools": [other, bash], "tool_choice": "required", "functions": [other]}
+        restrict_tools(body, allow_bash=True)
+        self.assertEqual(body, {"tools": [bash]})
+        restrict_tools(body, allow_bash=False)
+        self.assertEqual(body, {})
+
+    def test_broker_releases_unused_token_budget_for_the_tool_result(self):
+        with patch("socketserver.ThreadingUnixStreamServer.__init__", return_value=None):
+            broker = InferenceBroker("unused.sock", "dummy", "test", 2, 80)
+        first = broker.reserve({"max_tokens": 80})
+        self.assertIsNone(broker.reserve({"max_tokens": 1}))
+        broker.record_usage(b'data: {"usage":{"completion_tokens":15}}\n\n', True, first)
+        self.assertEqual(broker.reserve({"max_tokens": 80}), 65)
         self.assertIsNone(broker.reserve({"max_tokens": 1}))
 
 
