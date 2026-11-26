@@ -45,6 +45,8 @@ def read_policy(client, base):
     policy = json.loads(base64.b64decode(data["content"]))
     if policy.get("enabled") is not True:
         raise ValueError("Mistral Vibe repair is disabled by the trusted repository policy")
+    if type(policy.get("allow_bash", False)) is not bool:
+        raise ValueError("allow_bash must be a boolean")
     if not re.fullmatch(r"[a-zA-Z0-9._-]+", policy["model"]):
         raise ValueError("Invalid Vibe model")
     globs = policy["allowed_paths"]
@@ -172,13 +174,14 @@ def check_patch(candidate, patch, head, allowed_paths):
 
 
 def run_vibe(prompt, policy, image, key):
+    allow_bash = policy.get("allow_bash") is True
     with tempfile.TemporaryDirectory(prefix="autorepo-repair-") as tmp:
         root = Path(tmp)
         request = root / "request"
         request.mkdir(mode=0o700)
         (request / "prompt.txt").write_text(prompt)
         with InferenceBroker(str(root / "inference.sock"), key, policy["model"],
-                             policy["max_turns"], policy["max_tokens"]) as broker:
+                             policy["max_turns"], policy["max_tokens"], allow_bash=allow_bash) as broker:
             Thread(target=broker.serve_forever, daemon=True).start()
             tag = "autorepo-repair-" + uuid4().hex
             command = [
@@ -190,6 +193,7 @@ def run_vibe(prompt, policy, image, key):
                 "--mount", f"type=bind,src={request},dst=/request,readonly", image,
                 policy["model"], str(policy["max_turns"]), str(policy["max_tokens"]),
                 str(policy["budget_cents"] / 100), str(policy["timeout_seconds"]),
+                "true" if allow_bash else "false",
             ]
             child_env = {key: value for key, value in os.environ.items()
                          if key in {"PATH", "HOME", "DOCKER_HOST", "DOCKER_CONFIG"}}

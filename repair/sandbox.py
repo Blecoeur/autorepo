@@ -25,7 +25,7 @@ class Relay(socketserver.BaseRequestHandler):
 
 
 def main():
-    model, turns, tokens, price, seconds = sys.argv[1:]
+    model, turns, tokens, price, seconds, allow_bash = sys.argv[1:]
     home = Path("/tmp/vibe")
     home.mkdir()
     (home / "config.toml").write_text(f"""
@@ -43,12 +43,17 @@ provider = "broker"
 alias = "repair"
 max_context_length = 65536
 """)
+    tool_flags = ["--disabled-tools", "*"]
+    if allow_bash == "true":
+        with (home / "config.toml").open("a") as config:
+            config.write('\n[tools.bash]\npermission = "always"\n')
+        tool_flags = ["--enabled-tools", "bash"]
     with socketserver.ThreadingTCPServer(("127.0.0.1", 8000), Relay) as relay:
         relay.daemon_threads = True
         threading.Thread(target=relay.serve_forever, daemon=True).start()
         result = subprocess.run(
             ["vibe", "--prompt-file", "/request/prompt.txt", "--output", "text",
-             "--disabled-tools", "*", "--max-turns", turns, "--max-tokens", tokens,
+             *tool_flags, "--max-turns", turns, "--max-tokens", tokens,
              "--max-price", price, "--time-limit", seconds],
             cwd="/tmp", env={"PATH": os.environ["PATH"], "HOME": "/tmp",
                             "VIBE_HOME": str(home), "VIBE_TELEMETRY_ENABLED": "false",
