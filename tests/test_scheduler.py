@@ -127,6 +127,34 @@ class ReconcileTests(unittest.TestCase):
         self.assertEqual((inputs["pr"], inputs["head"], inputs["base"]), ("1", "a" * 40, BASE))
         self.assertIn("PR #2 (P4): queued", report)
 
+    def test_closes_empty_updated_pr_with_a_comment_and_continues_the_queue(self):
+        candidate = pr(1)
+        refreshed = {**candidate, "state": "open", "changed_files": 0,
+                     "base": {**candidate["base"], "sha": BASE},
+                     "head": {**candidate["head"], "sha": "a" * 40}}
+
+        class EmptyUpdateGitHub(FakeGitHub):
+            def pages(self, path, **query):
+                if path == "issues/1/comments":
+                    return iter([])
+                return super().pages(path, **query)
+
+            def request(self, path, body=None, **kwargs):
+                if path == "pulls/1" and body is None:
+                    return refreshed
+                if path == f"compare/{BASE}...{'a' * 40}?per_page=1":
+                    return {"ahead_by": 4, "behind_by": 0, "files": []}
+                return super().request(path, body, **kwargs)
+
+        github = EmptyUpdateGitHub([candidate, pr(2)], behind=("1",))
+        report = self.reconcile(github)
+        self.assertIn("PR #1: closed with a comment", report)
+        comment, closure, validation = github.writes[-3:]
+        self.assertEqual(comment[0], "issues/1/comments")
+        self.assertIn("no changed files", comment[1]["body"])
+        self.assertEqual(closure, ("pulls/1", {"state": "closed"}))
+        self.assertEqual(validation[1]["inputs"]["pr"], "2")
+
     def test_failed_validation_does_not_block_backlog(self):
         github = FakeGitHub([pr(1), pr(2)], [run(pr(1), conclusion="failure")])
         report = self.reconcile(github)
