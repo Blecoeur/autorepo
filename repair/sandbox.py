@@ -35,6 +35,7 @@ enable_update_checks = false
 name = "broker"
 api_base = "http://127.0.0.1:8000/v1"
 api_style = "openai"
+api_key_env_var = "AUTOREPO_LOCAL_BROKER_TOKEN"
 backend = "generic"
 [[models]]
 name = {json.dumps(model)}
@@ -50,7 +51,8 @@ max_context_length = 65536
              "--disabled-tools", "*", "--max-turns", turns, "--max-tokens", tokens,
              "--max-price", price, "--time-limit", seconds],
             cwd="/tmp", env={"PATH": os.environ["PATH"], "HOME": "/tmp",
-                            "VIBE_HOME": str(home), "VIBE_TELEMETRY_ENABLED": "false"},
+                            "VIBE_HOME": str(home), "VIBE_TELEMETRY_ENABLED": "false",
+                            "AUTOREPO_LOCAL_BROKER_TOKEN": "local-loopback-placeholder"},
             check=False,
         )
         return result.returncode

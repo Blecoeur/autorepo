@@ -76,7 +76,10 @@ class RepairIsolationTest(unittest.TestCase):
             if args[:2] == ["docker", "run"]:
                 options.extend(args)
                 self.assertNotIn(FAKE_KEY, repr(args) + repr(kwargs.get("env")))
-            return real_run(args, **kwargs)
+            result = real_run(args, **kwargs)
+            if args[:2] == ["docker", "run"] and result.returncode:
+                self.fail(result.stderr.decode(errors="replace").replace(FAKE_KEY, "[redacted]"))
+            return result
 
         real_run = subprocess.run
         with patch("repair.broker.HTTPSConnection", MockUpstream), patch(
