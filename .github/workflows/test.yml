@@ -10,3 +10,14 @@ jobs:
         with:
           persist-credentials: false
       - run: python3 -m unittest discover -s tests -v
+  repair-isolation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - run: docker build --tag autorepo-vibe:smoke ./repair
+      - run: python3 -m unittest discover -s tests -p test_repair_isolation.py -v
+        env:
+          AUTOREPO_TEST_VIBE_IMAGE: autorepo-vibe:smoke

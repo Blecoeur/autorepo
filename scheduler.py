@@ -73,7 +73,7 @@ class GitHub:
 def policy(source):
     required = {"branch", "validation_workflow", "version_groups", "retry_minutes",
                 "max_attempts", "update_timeout_minutes", "pause_for_critical"}
-    if not isinstance(source, dict) or source.keys() - {"merge", "publish_status"} != required:
+    if not isinstance(source, dict) or source.keys() - {"merge", "publish_status", "repair"} != required:
         raise ValueError("Missing or unknown Autorepo policy fields")
     for key, pattern in {
         "branch": r"[\w./-]+", "validation_workflow": r"[\w.-]+\.ya?ml",
@@ -110,6 +110,20 @@ def policy(source):
                or any(part.startswith(".") for part in name.split("/"))
                for name in merge["lockfiles"]):
             raise ValueError("Only recognized dependency lockfiles are eligible for auto-merge")
+    if "repair" in source:
+        repair = source["repair"]
+        if not isinstance(repair, dict) or repair.keys() != {"workflow", "rules"}:
+            raise ValueError("Invalid scheduler repair policy")
+        if not isinstance(repair["workflow"], str) or not re.fullmatch(r"[\w.-]+\.ya?ml", repair["workflow"]):
+            raise ValueError("Invalid repair workflow filename")
+        if not isinstance(repair["rules"], list) or not repair["rules"]:
+            raise ValueError("Configure explicit compatibility failure rules")
+        for rule in repair["rules"]:
+            if not isinstance(rule, dict) or rule.keys() != {"job", "step", "paths", "diagnosis"}:
+                raise ValueError("Invalid scheduler repair rule")
+            if any(not isinstance(rule[key], str) or not rule[key].strip()
+                   for key in ("job", "step", "paths", "diagnosis")):
+                raise ValueError("Repair rule inputs must be non-empty strings")
     return source
 
 
@@ -278,6 +292,47 @@ def auto_merge(client, protection_client, config, pr, base, rank):
     return "merged" if result["merged"] else "automatic merge was declined by GitHub"
 
 
+def queue_repair(client, config, pr, base, validation, report):
+    """Only a configured compatibility diagnostic can start a repair."""
+    repair = config.get("repair")
+    if not repair or validation["conclusion"] != "failure":
+        return False
+    failures = [job for job in client.pages(f"actions/runs/{validation['id']}/jobs", key="jobs")
+                if job["conclusion"] == "failure"]
+    if len(failures) != 1:
+        return False
+    job = failures[0]
+    failed_steps = {step["name"] for step in job.get("steps") or [] if step["conclusion"] == "failure"}
+    rule = next((r for r in repair["rules"] if r["job"] == job["name"] and failed_steps == {r["step"]}), None)
+    if rule is None:
+        return False
+    baseline = next((run for run in client.pages(
+        f"actions/workflows/{config['validation_workflow']}/runs",
+        key="workflow_runs", branch=config["branch"], event="push", head_sha=base)
+        if run["head_sha"] == base and run["conclusion"] == "success"), None)
+    if not baseline:
+        return False
+    head = pr["head"]["sha"]
+    prefix = f"Autorepo repair #{pr['number']} {head} {base}"
+    path = f"actions/workflows/{repair['workflow']}"
+    existing = any(run["display_title"] == prefix for run in client.pages(
+        f"{path}/runs", key="workflow_runs", branch=config["branch"], event="workflow_dispatch", head_sha=base
+    ))
+    if existing:
+        return False
+    try:
+        client.request(f"{path}/dispatches", {"ref": config["branch"], "inputs": {
+            "pr": str(pr["number"]), "head": head, "validation_run": str(validation["id"]),
+            "paths": rule["paths"], "diagnosis": rule["diagnosis"], "confirmed": "true",
+        }})
+    except HTTPError as error:
+        if error.code not in (403, 404, 422):
+            raise
+        report(f"PR #{pr['number']}: repair dispatch blocked by GitHub (HTTP {error.code}).")
+        return False
+    return True
+
+
 def reconcile(client, config, alerts, report, protection_client=None):
     branch = config["branch"]
     base = client.request(f"branches/{quote(branch, safe='')}")["commit"]["sha"]
@@ -342,7 +397,10 @@ def reconcile(client, config, alerts, report, protection_client=None):
             latest = max(history, key=lambda run: run["created_at"])
             charged = sum(max(1, run.get("run_attempt", 1)) for run in history)
             if latest["conclusion"] not in {"cancelled", "timed_out", "startup_failure", "stale"}:
-                report(f"{prefix}: validation {latest['conclusion']}; inspect CI and retry manually.")
+                if queue_repair(client, config, pr, base, latest, report):
+                    report(f"{prefix}: dispatched an isolated compatibility repair for human review.")
+                else:
+                    report(f"{prefix}: validation {latest['conclusion']}; inspect CI for the repair scope.")
                 continue
             if charged >= config["max_attempts"]:
                 report(f"{prefix}: retry budget exhausted.")

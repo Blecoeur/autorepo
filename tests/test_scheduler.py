@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import patch
 
-from scheduler import BOT_ID, GitHub, auto_merge, identity, policy, reconcile, target_key
+from scheduler import BOT_ID, GitHub, auto_merge, identity, policy, queue_repair, reconcile, target_key
 from validate.verify import verify
 
 BASE = "b" * 40
@@ -174,6 +174,35 @@ class ReconcileTests(unittest.TestCase):
         }
         with self.assertRaisesRegex(ValueError, "workflow revision"):
             verify(github, env)
+
+    def test_repair_requires_the_configured_failure_and_a_passing_base(self):
+        class RepairGitHub(FakeGitHub):
+            def __init__(self, jobs):
+                super().__init__([])
+                self.jobs = jobs
+
+            def pages(self, path, **query):
+                if path.endswith("/jobs"):
+                    return iter(self.jobs)
+                if path == "actions/workflows/checks.yml/runs" and query.get("event") == "push":
+                    return iter([{"head_sha": BASE, "conclusion": "success"}])
+                return iter([])
+
+        config = {**CONFIG, "repair": {
+            "workflow": "repair.yml",
+            "rules": [{"job": "compatibility", "step": "dependency API regression",
+                       "paths": "src/client.ts", "diagnosis": "The locked API moved."}],
+        }}
+        jobs = [{"name": "compatibility", "conclusion": "failure", "steps": [
+            {"name": "dependency API regression", "conclusion": "failure"},
+        ]}]
+        github = RepairGitHub(jobs)
+        self.assertTrue(queue_repair(github, config, pr(1), BASE, run(pr(1), conclusion="failure"), print))
+        self.assertEqual(github.writes[0][1]["inputs"]["head"], "1" * 40)
+        jobs.append({"name": "dependency-audit", "conclusion": "failure"})
+        github = RepairGitHub(jobs)
+        self.assertFalse(queue_repair(github, config, pr(1), BASE, run(pr(1), conclusion="failure"), print))
+        self.assertFalse(github.writes)
 
     def test_invalid_configuration_fails(self):
         with self.assertRaises(ValueError):

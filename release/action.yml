@@ -1,0 +1,30 @@
+name: Create a maintenance release draft
+description: Draft release notes for a validated default-branch revision
+inputs:
+  tag:
+    description: New stable semantic version tag beginning with v
+    required: true
+  validation-workflow:
+    description: Workflow file that validates the default branch
+    required: true
+  fixed-advisories:
+    description: Space-separated reviewed GHSA IDs fixed in this release, or none
+    required: true
+  remaining-advisories:
+    description: Space-separated reviewed GHSA IDs still open, or none
+    required: true
+  ai-repairs:
+    description: Space-separated approved Vibe repair PR numbers, or none
+    required: true
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        RELEASE_TAG: ${{ inputs.tag }}
+        RELEASE_CI: ${{ inputs.validation-workflow }}
+        RELEASE_FIXED: ${{ inputs.fixed-advisories }}
+        RELEASE_REMAINING: ${{ inputs.remaining-advisories }}
+        RELEASE_AI: ${{ inputs.ai-repairs }}
+      run: python3 "$GITHUB_ACTION_PATH/draft.py"

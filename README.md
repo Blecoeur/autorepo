@@ -26,8 +26,40 @@ Supervised review is the default. Optional auto-merge requires an approved lockf
 
 The controller re-reads the PR and default branch before asking GitHub to merge the verified head. GitHub's strict checks must be configured and enforced on the actual PR. Dispatch results in GitHub are normally associated with the workflow revision. A project that suppresses full PR CI can use `publish_status` and require the `autorepo/validation` status from GitHub Actions after verifying the live workflow and strict branch protection. Review security updates, major changes, workflow edits, and manifest edits manually. Caveats and setup details are described in [GitHub's branch protection documentation](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches).
 
-## Current scope
+## Mistral Vibe repair
 
-Autonomous repair and automated publishing are disabled. Mistral Vibe requires a verified credential and runner isolation design before activation. The scheduler currently surfaces failed validation for human diagnosis. GitHub-hosted integration, repository settings, and live merge behaviour require validation in the target repository.
+The `repair` composite action accepts an exact, failed Autorepo validation
+run, a reproduced dependency incompatibility, and scoped application source
+paths. A project provides the trusted JSON policy in
+`.github/autorepo-repair.json` and keeps its validation workflow and test
+commands in its own repository. A configured CI failure rule can dispatch a
+repair automatically after the current base passes CI. Without that rule, a
+maintainer confirms the diagnosis and starts the repair from the default
+branch. Audit, infrastructure, and unclassified failures stay in the
+deterministic workflow.
+
+Vibe receives only the reviewed diagnosis, dependency diff, and selected source
+files. Its container has no external network or Docker socket. A host broker
+forwards a bounded number of requests to the Mistral chat endpoint and injects
+the dedicated API key outside the container. The runner checks the diff
+against the verified candidate commit using a temporary index and rejects
+changes outside the selected application files. The artifact records the PR,
+validation run, head, base, model, attempts, and reported token usage.
+
+The consuming workflow uploads the patch for human approval. A maintainer can
+apply the reviewed patch to a separate branch and open a PR for independent
+project CI. The repair job receives read-only GitHub permissions. Enable the
+job only after the Linux isolation test passes and a dedicated Mistral API key
+has been configured in the repository's repair environment. The CLI cost
+setting is indicative. The broker enforces request and completion-token caps.
+
+## Maintenance release drafts
+
+The optional `release` composite action creates a GitHub release draft for
+an exact default-branch revision with successful push CI. The operator
+supplies the new semantic version tag, reviewed fixed and remaining advisory
+IDs, and the reviewed Vibe repair PRs. Call it from a serialized manual
+workflow with `actions: read` and `contents: write`. Review the draft and
+publish it through the project's normal release process.
 
 Run the local scheduler tests with `python3 -m unittest discover -s tests -v`.
