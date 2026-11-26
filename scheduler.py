@@ -230,9 +230,33 @@ def wait_for_updated_head(client, pr, branch, base):
         if head == pr["head"]["sha"]:
             continue
         comparison = client.request(f"compare/{base}...{head}?per_page=1")
-        if comparison["ahead_by"] and not comparison["behind_by"]:
-            return refreshed
+        if not comparison["behind_by"] and (comparison["ahead_by"] or comparison.get("files") == []):
+            return refreshed, comparison
     return None
+
+
+def close_empty_pr(client, pr, branch, base, comparison, report):
+    """Handle a confirmed empty diff without running CI."""
+    if comparison["behind_by"] or comparison.get("files") != []:
+        return False
+    number, head = pr["number"], pr["head"]["sha"]
+    comments_path = f"issues/{number}/comments"
+    body = (f"Closing this dependency update because `{head}` has no changed files "
+            f"against `{branch}` (`{base}`). There is nothing left to merge.")
+    has_comment = any(comment["user"]["id"] == ACTIONS_BOT_ID and comment["body"] == body
+                      for comment in client.pages(comments_path))
+    current = client.request(f"pulls/{number}")
+    if (current["state"] != "open" or not eligible(current, client.repository, branch)
+            or current["head"]["sha"] != head or current["base"]["sha"] != base
+            or current.get("changed_files") != 0
+            or client.request(f"branches/{quote(branch, safe='')}")["commit"]["sha"] != base):
+        report(f"PR #{number}: empty diff could not be confirmed on the current head and base.")
+        return True
+    if not has_comment:
+        client.request(comments_path, {"body": body})
+    client.request(f"pulls/{number}", {"state": "closed"}, method="PATCH")
+    report(f"PR #{number}: closed with a comment because the diff against {branch} is empty.")
+    return True
 
 
 def publish_status(client, pr, base, targets, runs):
@@ -413,6 +437,10 @@ def reconcile(client, config, alerts, report, protection_client=None):
         if active:
             report(f"{prefix}: queued while validation #{active['id']} runs.")
             continue
+        head = pr["head"]["sha"]
+        comparison = client.request(f"compare/{base}...{head}?per_page=1")
+        if close_empty_pr(client, pr, branch, base, comparison, report):
+            continue
         if history:
             latest = max(history, key=lambda run: run["created_at"])
             charged = sum(max(1, run.get("run_attempt", 1)) for run in history)
@@ -428,8 +456,6 @@ def reconcile(client, config, alerts, report, protection_client=None):
             if status_age(latest) < config["retry_minutes"] * (2 ** (charged - 1)):
                 report(f"{prefix}: retry waiting for backoff.")
                 continue
-        head = pr["head"]["sha"]
-        comparison = client.request(f"compare/{base}...{head}?per_page=1")
         if comparison["ahead_by"] == 0:
             report(f"{prefix}: no commits to integrate; verify that the update is redundant.")
             continue
@@ -446,8 +472,10 @@ def reconcile(client, config, alerts, report, protection_client=None):
             if client.request(f"branches/{quote(branch, safe='')}")["commit"]["sha"] != base:
                 report(f"{prefix}: base moved during the branch update; will check on the next reconciliation.")
                 return
-            pr = refreshed
+            pr, comparison = refreshed
             head = pr["head"]["sha"]
+            if close_empty_pr(client, pr, branch, base, comparison, report):
+                continue
             if by_title.get(identity(pr, base, targets)):
                 report(f"{prefix}: updated head already has validation history; will check on the next reconciliation.")
                 continue
