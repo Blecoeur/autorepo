@@ -11,8 +11,9 @@ inputs:
     description: Failed Autorepo CI run ID
     required: true
   paths:
-    description: Whitespace-separated application files to repair
-    required: true
+    description: Optional whitespace-separated repair path hints
+    required: false
+    default: ''
   diagnosis:
     description: Sanitized dependency incompatibility diagnosis
     required: true
@@ -44,16 +45,49 @@ runs:
         REPAIRABLE_JOBS: ${{ inputs.repairable-jobs }}
       run: |
         python3 "$GITHUB_ACTION_PATH/propose.py" --verify
-    - name: Fetch verified candidate for patch application check
+    - name: Fetch verified candidate
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
         ref: ${{ steps.request.outputs.head }}
         path: autorepo-candidate
         persist-credentials: false
-    - name: Build ephemeral repair image
+    - name: Prepare the Vibe repair request
+      id: prepare
       shell: bash
-      run: docker build --tag autorepo-vibe:runner "$GITHUB_ACTION_PATH"
-    - name: Generate and verify patch
+      env:
+        GH_TOKEN: ${{ github.token }}
+        REPAIR_PR: ${{ inputs.pr }}
+        REPAIR_HEAD: ${{ inputs.head }}
+        VALIDATION_RUN: ${{ inputs.validation-run }}
+        REPAIR_CONFIRM: ${{ inputs.confirmed }}
+        REPAIRABLE_JOBS: ${{ inputs.repairable-jobs }}
+        REPAIR_PATHS: ${{ inputs.paths }}
+        REPAIR_DIAGNOSIS: ${{ inputs.diagnosis }}
+        REPAIR_PROMPT: ${{ runner.temp }}/autorepo-prompt.txt
+        REPAIR_ARGS: ${{ runner.temp }}/autorepo-vibe-args
+      run: |
+        python3 "$GITHUB_ACTION_PATH/propose.py" --prepare
+    - name: Install uv
+      uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+    - name: Install Mistral Vibe
+      shell: bash
+      working-directory: ${{ github.action_path }}
+      run: |
+        uv sync --locked --all-extras --dev
+    - name: Run Mistral Vibe
+      shell: bash
+      working-directory: ${{ github.workspace }}/autorepo-candidate
+      env:
+        MISTRAL_API_KEY: ${{ inputs.api-key }}
+        PROMPT_FILE: ${{ steps.prepare.outputs.prompt-file }}
+        ARGS_FILE: ${{ steps.prepare.outputs.args-file }}
+        EXPORT_DIR: ${{ runner.temp }}/autorepo-vibe-export
+      run: |
+        mkdir -p "$EXPORT_DIR"
+        mapfile -t VIBE_ARGS < "$ARGS_FILE"
+        uv run --project "$GITHUB_ACTION_PATH" --no-sync vibe --trust \
+          --prompt-file "$PROMPT_FILE" --output-dir "$EXPORT_DIR" "${VIBE_ARGS[@]}"
+    - name: Check the repair diff and publish the artifact
       id: propose
       shell: bash
       env:
@@ -64,11 +98,9 @@ runs:
         VALIDATION_RUN: ${{ inputs.validation-run }}
         REPAIR_CONFIRM: ${{ inputs.confirmed }}
         REPAIRABLE_JOBS: ${{ inputs.repairable-jobs }}
-        REPAIR_PATHS: ${{ inputs.paths }}
-        REPAIR_DIAGNOSIS: ${{ inputs.diagnosis }}
-        REPAIR_IMAGE: autorepo-vibe:runner
         REPAIR_CHECKOUT: ${{ github.workspace }}/autorepo-candidate
         REPAIR_OUTPUT: ${{ runner.temp }}/autorepo-proposal
+        REPAIR_EXPORT: ${{ runner.temp }}/autorepo-vibe-export
       run: |
-        python3 "$GITHUB_ACTION_PATH/propose.py"
+        python3 "$GITHUB_ACTION_PATH/propose.py" --collect
         printf 'artifact-path=%s\n' "$REPAIR_OUTPUT" >> "$GITHUB_OUTPUT"
