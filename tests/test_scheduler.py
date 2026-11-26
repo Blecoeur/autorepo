@@ -1,6 +1,7 @@
 import unittest
+from unittest.mock import patch
 
-from scheduler import BOT_ID, auto_merge, identity, policy, reconcile, target_key
+from scheduler import BOT_ID, GitHub, auto_merge, identity, policy, reconcile, target_key
 from validate.verify import verify
 
 BASE = "b" * 40
@@ -63,6 +64,17 @@ def run(candidate, *, status="completed", conclusion="success", base=BASE, targe
     return {"head_sha": base, "id": 10, "display_title": identity(candidate, base, targets),
             "status": status, "conclusion": conclusion,
             "created_at": "2026-01-22T00:00:00Z", "updated_at": "2026-01-22T00:00:00Z"}
+
+
+class GitHubTests(unittest.TestCase):
+    @patch("scheduler.urlopen")
+    def test_repository_metadata_url_has_no_trailing_slash(self, urlopen):
+        client = GitHub(REPO, "test-token")
+        urlopen.return_value.__enter__.return_value.read.return_value = b'{"default_branch":"trunk"}'
+        result = client.request("")
+        self.assertEqual(result, {"default_branch": "trunk"})
+        self.assertEqual(urlopen.call_args.args[0].full_url,
+                         f"{client.api_url}/repos/{REPO}")
 
 
 class ReconcileTests(unittest.TestCase):

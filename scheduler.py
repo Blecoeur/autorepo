@@ -46,7 +46,10 @@ class GitHub:
         self.graphql_url = os.environ.get("GITHUB_GRAPHQL_URL", self.api_url + "/graphql")
 
     def request(self, path, body=None, *, method=None, graphql=False):
-        url = self.graphql_url if graphql else f"{self.api_url}/repos/{self.repository}/{path}"
+        repository_url = f"{self.api_url}/repos/{self.repository}"
+        url = self.graphql_url if graphql else repository_url
+        if path and not graphql:
+            url = f"{repository_url}/{path}"
         request = Request(url, headers={
             "Authorization": f"Bearer {self.token}",
             "Accept": "application/vnd.github+json",
