@@ -1,0 +1,13 @@
+{
+  "branch": "main",
+  "validation_workflow": "ci.yml",
+  "version_groups": {
+    "production-patch": 4,
+    "production-minor": 5,
+    "development": 6
+  },
+  "retry_minutes": 15,
+  "max_attempts": 2,
+  "update_timeout_minutes": 60,
+  "pause_for_critical": false
+}

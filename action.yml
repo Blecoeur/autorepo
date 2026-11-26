@@ -1,0 +1,22 @@
+name: Autorepo
+description: Schedule dependency maintenance using GitHub Actions
+inputs:
+  config:
+    description: Path to the trusted repository policy
+    default: .github/autorepo.json
+  alerts-token:
+    description: Optional GitHub App token with read access to Dependabot alerts
+    required: false
+  protection-token:
+    description: Optional GitHub App token with Administration read access for opt-in auto-merge
+    required: false
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        AUTOREPO_CONFIG: ${{ inputs.config }}
+        AUTOREPO_ALERTS_TOKEN: ${{ inputs.alerts-token }}
+        AUTOREPO_PROTECTION_TOKEN: ${{ inputs.protection-token }}
+        GH_TOKEN: ${{ github.token }}
+      run: python3 "$GITHUB_ACTION_PATH/scheduler.py"

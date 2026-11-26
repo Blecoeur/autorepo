@@ -1,0 +1,34 @@
+name: Verify Autorepo validation input
+description: Bind project CI to an open Dependabot pull request, its exact state, and the trusted workflow revision
+inputs:
+  branch:
+    description: Trusted branch name
+    required: true
+  pr:
+    description: Pull request number
+    required: true
+  head:
+    description: Commit to test
+    required: true
+  base:
+    description: Base commit
+    required: true
+  advisories:
+    description: Comma-separated advisory IDs to verify
+    required: false
+  key:
+    description: Validation key derived from the advisory IDs
+    required: true
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        BASE_BRANCH: ${{ inputs.branch }}
+        PR: ${{ inputs.pr }}
+        HEAD_SHA: ${{ inputs.head }}
+        BASE_SHA: ${{ inputs.base }}
+        ADVISORIES: ${{ inputs.advisories }}
+        VALIDATION_KEY: ${{ inputs.key }}
+      run: python3 "$GITHUB_ACTION_PATH/verify.py"
