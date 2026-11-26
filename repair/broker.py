@@ -62,12 +62,14 @@ class InferenceRequest(BaseHTTPRequestHandler):
                 return
             body = json.loads(self.rfile.read(length))
         except (ValueError, TimeoutError):
-            self.send_error(400)
+            self.send_error(400, "Invalid inference JSON")
             return
-        if (not isinstance(body, dict) or body.get("model") != self.server.model
-                or not isinstance(body.get("messages"), list) or body.get("tools")):
-            self.send_error(400)
+        if not isinstance(body, dict) or not isinstance(body.get("messages"), list):
+            self.send_error(400, "Missing inference messages")
             return
+        body["model"] = self.server.model
+        for option in ("tools", "tool_choice", "parallel_tool_calls", "functions", "function_call"):
+            body.pop(option, None)
         limit = self.server.reserve(body)
         if limit is None:
             self.send_error(429)
