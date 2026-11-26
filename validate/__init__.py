@@ -1,0 +1,1 @@
+"""Autorepo validation action."""
