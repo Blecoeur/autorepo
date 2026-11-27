@@ -1,7 +1,9 @@
 import unittest
+from datetime import datetime, timezone
 from unittest.mock import patch
 
-from scheduler import BOT_ID, GitHub, auto_merge, identity, policy, queue_repair, reconcile, target_key
+from scheduler import (ACTIONS_BOT_ID, BOT_ID, REPORT_MARKER, GitHub, auto_merge,
+                       identity, policy, queue_repair, reconcile, target_key)
 from validate.verify import verify
 
 BASE = "b" * 40
@@ -259,6 +261,60 @@ class ReconcileTests(unittest.TestCase):
     def test_invalid_configuration_fails(self):
         with self.assertRaises(ValueError):
             policy({**CONFIG, "max_attempts": True})
+
+    def test_pr_report_flag_must_be_boolean(self):
+        self.assertTrue(policy({**CONFIG, "pr_report": True})["pr_report"])
+        with self.assertRaises(ValueError):
+            policy({**CONFIG, "pr_report": "yes"})
+
+    def test_pr_report_posts_one_comment_per_managed_pr(self):
+        class ReportGitHub(FakeGitHub):
+            def pages(self, path, **query):
+                if path == "issues/1/comments":
+                    return iter([])
+                return super().pages(path, **query)
+
+        github = ReportGitHub([pr(1)])
+        self.reconcile(github, config={**CONFIG, "pr_report": True})
+        [write] = [w for w in github.writes if w[0] == "issues/1/comments"]
+        self.assertIn(REPORT_MARKER, write[1]["body"])
+        self.assertIn("PR #1", write[1]["body"])
+        self.assertIn("CI requested for head", write[1]["body"])
+
+    def test_pr_report_is_off_by_default(self):
+        github = FakeGitHub([pr(1)])
+        self.reconcile(github)
+        self.assertFalse(any(path.startswith("issues/") for path, _ in github.writes))
+
+    def test_pr_report_updates_the_existing_bot_comment_only_when_changed(self):
+        class FrozenDatetime:
+            @staticmethod
+            def now(tz=None):
+                return datetime(2026, 1, 22, 12, 0, tzinfo=tz)
+            fromisoformat = staticmethod(datetime.fromisoformat)
+
+        class ReportGitHub(FakeGitHub):
+            comments = []
+
+            def pages(self, path, **query):
+                if path == "issues/1/comments":
+                    return iter(self.comments)
+                return super().pages(path, **query)
+
+        with patch("scheduler.datetime", FrozenDatetime):
+            github = ReportGitHub([pr(1)])
+            self.reconcile(github, config={**CONFIG, "pr_report": True})
+            [(path, payload)] = [w for w in github.writes if w[0].startswith("issues/")]
+            self.assertEqual(path, "issues/1/comments")
+            github.comments = [{"id": 7, "user": {"id": ACTIONS_BOT_ID}, "body": payload["body"]}]
+            github.writes.clear()
+            self.reconcile(github, config={**CONFIG, "pr_report": True})
+            self.assertFalse(any(p.startswith("issues/") for p, _ in github.writes))
+            github.comments[0]["body"] = f"{REPORT_MARKER}\nstale"
+            self.reconcile(github, config={**CONFIG, "pr_report": True})
+            [(path, payload)] = [w for w in github.writes if w[0].startswith("issues/")]
+            self.assertEqual(path, "issues/1/comments/7")
+            self.assertIn(REPORT_MARKER, payload["body"])
 
 
 if __name__ == "__main__":

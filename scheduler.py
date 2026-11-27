@@ -16,6 +16,7 @@ BOT_ID = 49699333
 SEVERITY = {"CRITICAL": 0, "HIGH": 1, "MODERATE": 2, "LOW": 3}
 MARKER = "autorepo/update"
 VALIDATION = "autorepo/validation"
+REPORT_MARKER = "<!-- autorepo-report -->"
 ACTIONS_BOT_ID = 41898282
 UPDATE_POLL_ATTEMPTS = 7
 UPDATE_POLL_SECONDS = 5
@@ -76,7 +77,7 @@ class GitHub:
 def policy(source):
     required = {"branch", "validation_workflow", "version_groups", "retry_minutes",
                 "max_attempts", "update_timeout_minutes", "pause_for_critical"}
-    if not isinstance(source, dict) or source.keys() - {"merge", "publish_status", "repair"} != required:
+    if not isinstance(source, dict) or source.keys() - {"merge", "publish_status", "pr_report", "repair"} != required:
         raise ValueError("Missing or unknown Autorepo policy fields")
     for key, pattern in {
         "branch": r"[\w./-]+", "validation_workflow": r"[\w.-]+\.ya?ml",
@@ -96,6 +97,8 @@ def policy(source):
         raise ValueError("pause_for_critical must be boolean")
     if type(source.get("publish_status", False)) is not bool:
         raise ValueError("publish_status must be boolean")
+    if type(source.get("pr_report", False)) is not bool:
+        raise ValueError("pr_report must be boolean")
     if "merge" in source:
         merge = source["merge"]
         if not isinstance(merge, dict) or merge.keys() != {"method", "required_checks", "lockfiles"}:
@@ -282,6 +285,23 @@ def publish_status(client, pr, base, targets, runs):
         client.request(f"statuses/{head}", payload)
 
 
+def publish_report(client, number, lines):
+    """Keep one updatable Autorepo report comment on a managed pull request."""
+    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    body = (f"{REPORT_MARKER}\n**Autorepo report** ({stamp})\n\n"
+            + "\n".join(f"- {line}" for line in lines))
+    path = f"issues/{number}/comments"
+    existing = next((comment for comment in client.pages(path)
+                     if comment["user"]["id"] == ACTIONS_BOT_ID
+                     and REPORT_MARKER in comment["body"]), None)
+    if existing and existing["body"] == body:
+        return
+    if existing:
+        client.request(f"{path}/{existing['id']}", {"body": body}, method="PATCH")
+    else:
+        client.request(path, {"body": body})
+
+
 def auto_merge(client, protection_client, config, pr, base, rank):
     """GitHub enforces strict required checks at the moment it accepts the merge."""
     merge = config.get("merge")
@@ -378,6 +398,24 @@ def queue_repair(client, config, pr, base, validation, report):
 
 
 def reconcile(client, config, alerts, report, protection_client=None):
+    collected = defaultdict(list)
+
+    def tracked(line):
+        report(line)
+        number = re.match(r"PR #(\d+)", line)
+        if number:
+            collected[int(number.group(1))].append(line)
+
+    try:
+        _reconcile(client, config, alerts, tracked, protection_client)
+    finally:
+        if config.get("pr_report"):
+            for number, lines in sorted(collected.items()):
+                publish_report(client, number, lines)
+    return dict(collected)
+
+
+def _reconcile(client, config, alerts, report, protection_client=None):
     branch = config["branch"]
     base = client.request(f"branches/{quote(branch, safe='')}")["commit"]["sha"]
     workflow = config["validation_workflow"]
