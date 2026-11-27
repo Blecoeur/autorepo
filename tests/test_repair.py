@@ -54,7 +54,7 @@ class BlocklistTests(unittest.TestCase):
         for mutation in ({"enabled": False}, {"allow_bash": "yes"},
                          {"blocked_paths": []}, {"blocked_paths": ".github/**"},
                          {"blocked_paths": [".github/**", 7]}, {"max_turns": 0},
-                         {"max_tokens": 100000}, {"budget_cents": "5"}):
+                         {"max_tokens": 2_000_000}, {"budget_cents": "5"}):
             with self.subTest(mutation=mutation):
                 broken = {**client.policy, **mutation}
                 self.assertRaises(ValueError, read_policy, FakeGitHub(broken), "main")
