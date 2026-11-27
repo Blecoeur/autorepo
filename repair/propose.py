@@ -19,7 +19,7 @@ SECRETS = re.compile(
     re.IGNORECASE,
 )
 SAFE_PATH = re.compile(r"[A-Za-z0-9_-][A-Za-z0-9._/-]*")
-BUDGETS = {"max_attempts": 2, "max_turns": 10, "max_tokens": 1_048_576,
+BUDGETS = {"max_attempts": 2, "max_tokens": 1_048_576,
            "timeout_seconds": 1200, "budget_cents": 300}
 MANIFESTS = {"package.json", "pnpm-lock.yaml", "Cargo.toml", "go.mod", "pyproject.toml"}
 
@@ -150,7 +150,6 @@ def build_prompt(client, env, base, head, run_id, policy):
 
 def write_request(env, prompt, policy):
     args = ["--agent", "auto-approve",
-            "--max-turns", str(policy["max_turns"]),
             "--max-tokens", str(policy["max_tokens"]),
             "--max-price", str(policy["budget_cents"] / 100),
             "--time-limit", str(policy["timeout_seconds"])]
