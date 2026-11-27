@@ -47,13 +47,13 @@ class BlocklistTests(unittest.TestCase):
     def test_policy_validation(self):
         client = FakeGitHub({"enabled": True, "allow_bash": True,
                              "blocked_paths": [".github/**"],
-                             **{key: 1 for key in ("max_attempts", "max_turns", "max_tokens",
+                             **{key: 1 for key in ("max_attempts", "max_tokens",
                                                    "timeout_seconds", "budget_cents")}})
         policy = read_policy(client, "main")
         self.assertEqual(policy["blocked_paths"], [".github/**"])
         for mutation in ({"enabled": False}, {"allow_bash": "yes"},
                          {"blocked_paths": []}, {"blocked_paths": ".github/**"},
-                         {"blocked_paths": [".github/**", 7]}, {"max_turns": 0},
+                         {"blocked_paths": [".github/**", 7]},
                          {"max_tokens": 2_000_000}, {"budget_cents": "5"}):
             with self.subTest(mutation=mutation):
                 broken = {**client.policy, **mutation}
@@ -63,7 +63,7 @@ class BlocklistTests(unittest.TestCase):
 class RepairRequestTests(unittest.TestCase):
     def setUp(self):
         self.policy = {"enabled": True, "allow_bash": False, "blocked_paths": [".github/**"],
-                       "max_attempts": 2, "max_turns": 4, "max_tokens": 800,
+                       "max_attempts": 2, "max_tokens": 800,
                        "timeout_seconds": 300, "budget_cents": 50}
 
     def test_prompt_states_the_blocklist_and_hints(self):
@@ -97,7 +97,6 @@ class RepairRequestTests(unittest.TestCase):
             self.assertEqual((Path(env["REPAIR_PROMPT"])).read_text(), "repair the code")
             args = (Path(env["REPAIR_ARGS"])).read_text().split()
             self.assertEqual(args[:2], ["--agent", "auto-approve"])
-            self.assertEqual(args[args.index("--max-turns") + 1], "4")
             self.assertEqual(args[args.index("--max-price") + 1], "0.5")
             self.assertIn("bash", args)
             with_bash = {**self.policy, "allow_bash": True}

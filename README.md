@@ -43,7 +43,7 @@ the runner through uv and the pinned lockfile in this directory. The prompt
 carries the reviewed diagnosis, the dependency diff, the optional path hints,
 and the policy's `blocked_paths` list. Set `allow_bash: true` to keep the Bash
 tool enabled; without it, Vibe can still edit files but cannot run shell
-commands. The policy's turn, token, price, and time limits bound the run.
+commands. The policy's token, price, and time limits bound the run.
 
 `blocked_paths` is the single edit policy. Every path Vibe modified, created,
 or deleted must avoid all patterns in that list, for example `.github/**`,
