@@ -19,7 +19,7 @@ SECRETS = re.compile(
     re.IGNORECASE,
 )
 SAFE_PATH = re.compile(r"[A-Za-z0-9_-][A-Za-z0-9._/-]*")
-BUDGETS = {"max_attempts": 2, "max_turns": 10, "max_tokens": 1_048_576,
+BUDGETS = {"max_attempts": 2, "max_turns": 1_000, "max_tokens": 1_048_576,
            "timeout_seconds": 1200, "budget_cents": 300}
 MANIFESTS = {"package.json", "pnpm-lock.yaml", "Cargo.toml", "go.mod", "pyproject.toml"}
 
